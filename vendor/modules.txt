@@ -53,7 +53,11 @@ github.com/containers/common/pkg/flag
 github.com/containers/common/pkg/report
 github.com/containers/common/pkg/report/camelcase
 github.com/containers/common/pkg/retry
+<<<<<<< HEAD
 # github.com/containers/image/v5 v5.17.0
+=======
+# github.com/containers/image/v5 v5.16.2-0.20211021181114-25411654075f => github.com/Jamstah/image/v5 v5.16.2-0.20211121151629-47993d8153d5
+>>>>>>> 77ca3ea2 (Add option to preserve digests)
 github.com/containers/image/v5/copy
 github.com/containers/image/v5/directory
 github.com/containers/image/v5/directory/explicitfilepath

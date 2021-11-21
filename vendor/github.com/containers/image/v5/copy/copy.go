@@ -133,6 +133,10 @@ type Options struct {
 	ForceManifestMIMEType string
 	ImageListSelection    ImageListSelection // set to either CopySystemImage (the default), CopyAllImages, or CopySpecificImages to control which instances we copy when the source reference is a list; ignored if the source reference is not a list
 	Instances             []digest.Digest    // if ImageListSelection is CopySpecificImages, copy only these instances and the list itself
+
+	// Preserve digests, and fail if we cannot.
+	PreserveDigests bool
+
 	// If OciEncryptConfig is non-nil, it indicates that an image should be encrypted.
 	// The encryption options is derived from the construction of EncryptConfig object.
 	// Note: During initial encryption process of a layer, the resultant digest is not known
@@ -410,7 +414,7 @@ func (c *copier) copyMultipleImages(ctx context.Context, policyContext *signatur
 			return nil, errors.Wrapf(err, "Can not copy signatures to %s", transports.ImageName(c.dest.Reference()))
 		}
 	}
-	canModifyManifestList := (len(sigs) == 0)
+	canModifyManifestList := (len(sigs) == 0) && !options.PreserveDigests
 
 	// Determine if we'll need to convert the manifest list to a different format.
 	forceListMIMEType := options.ForceManifestMIMEType
@@ -426,7 +430,7 @@ func (c *copier) copyMultipleImages(ctx context.Context, policyContext *signatur
 	}
 	if selectedListType != originalList.MIMEType() {
 		if !canModifyManifestList {
-			return nil, errors.Errorf("manifest list must be converted to type %q to be written to destination, but that would invalidate signatures", selectedListType)
+			return nil, errors.Errorf("manifest list must be converted to type %q to be written to destination, but we are preserving digests", selectedListType)
 		}
 	}
 
@@ -511,7 +515,7 @@ func (c *copier) copyMultipleImages(ctx context.Context, policyContext *signatur
 		// If we can't just use the original value, but we have to change it, flag an error.
 		if !bytes.Equal(attemptedManifestList, originalManifestList) {
 			if !canModifyManifestList {
-				return nil, errors.Errorf(" manifest list must be converted to type %q to be written to destination, but that would invalidate signatures", thisListType)
+				return nil, errors.Errorf(" manifest list must be converted to type %q to be written to destination, but that would alter the digest", thisListType)
 			}
 			logrus.Debugf("Manifest list has been updated")
 		} else {
@@ -554,6 +558,8 @@ func (c *copier) copyMultipleImages(ctx context.Context, policyContext *signatur
 // copyOneImage copies a single (non-manifest-list) image unparsedImage, using policyContext to validate
 // source image admissibility.
 func (c *copier) copyOneImage(ctx context.Context, policyContext *signature.PolicyContext, options *Options, unparsedToplevel, unparsedImage *image.UnparsedImage, targetInstance *digest.Digest) (retManifest []byte, retManifestType string, retManifestDigest digest.Digest, retErr error) {
+	logrus.Warnf("Preserving digests: %v", options.PreserveDigests)
+
 	// The caller is handling manifest lists; this could happen only if a manifest list contains a manifest list.
 	// Make sure we fail cleanly in such cases.
 	multiImage, err := isMultiImage(ctx, unparsedImage)
@@ -634,7 +640,7 @@ func (c *copier) copyOneImage(ctx context.Context, policyContext *signature.Poli
 		manifestUpdates: &types.ManifestUpdateOptions{InformationOnly: types.ManifestUpdateInformation{Destination: c.dest}},
 		src:             src,
 		// diffIDsAreNeeded is computed later
-		canModifyManifest: len(sigs) == 0 && !destIsDigestedReference,
+		canModifyManifest: (len(sigs) == 0) && !destIsDigestedReference && !options.PreserveDigests,
 		ociEncryptLayers:  options.OciEncryptLayers,
 	}
 	// Ensure _this_ copy sees exactly the intended data when either processing a signed image or signing it.
@@ -713,7 +719,7 @@ func (c *copier) copyOneImage(ctx context.Context, policyContext *signature.Poli
 		// With !ic.canModifyManifest, that would just be a string of repeated failures for the same reason,
 		// so let’s bail out early and with a better error message.
 		if !ic.canModifyManifest {
-			return nil, "", "", errors.Wrap(err, "Writing manifest failed (and converting it is not possible, image is signed or the destination specifies a digest)")
+			return nil, "", "", errors.Wrap(err, "Writing manifest failed and we are preserving digests so cannot try conversions")
 		}
 
 		// errs is a list of errors when trying various manifest types. Also serves as an "upload succeeded" flag when set to nil.
@@ -814,7 +820,7 @@ func (ic *imageCopier) updateEmbeddedDockerReference() error {
 	}
 
 	if !ic.canModifyManifest {
-		return errors.Errorf("Copying a schema1 image with an embedded Docker reference to %s (Docker reference %s) would change the manifest, which is not possible (image is signed or the destination specifies a digest)",
+		return errors.Errorf("Copying a schema1 image with an embedded Docker reference to %s (Docker reference %s) would change the manifest, and we are preserving digests",
 			transports.ImageName(ic.c.dest.Reference()), destRef.String())
 	}
 	ic.manifestUpdates.EmbeddedDockerReference = destRef
@@ -845,7 +851,7 @@ func (ic *imageCopier) copyLayers(ctx context.Context) error {
 	// If we only need to check authorization, no updates required.
 	if updatedSrcInfos != nil && !reflect.DeepEqual(srcInfos, updatedSrcInfos) {
 		if !ic.canModifyManifest {
-			return errors.Errorf("Copying this image requires changing layer representation, which is not possible (image is signed or the destination specifies a digest)")
+			return errors.Errorf("Copying this image requires changing layer representation and we are preserving digests")
 		}
 		srcInfos = updatedSrcInfos
 		srcInfosUpdated = true
